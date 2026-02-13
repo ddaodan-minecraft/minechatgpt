@@ -331,4 +331,29 @@ public class ConfigManager {
     public int getQueueDispatchPerTick() {
         return Math.max(1, config.getInt("queue.dispatch_per_tick", 2));
     }
+
+    public boolean isUpdateCheckerEnabled() {
+        return config.getBoolean("update_checker.enabled", true);
+    }
+    public String getUpdateCheckerSource() {
+        return config.getString("update_checker.source", "github");
+    }
+    public String getHelpCheckUpdateMessage() {
+        return languageManager.getMessage("help_checkupdate");
+    }
+    public String getUpdateCheckingMessage() {
+        return languageManager.getMessage("update_checking", "&eChecking for updates...");
+    }
+    public String getUpdateAvailableMessage() {
+        return languageManager.getMessage("update_available", "&aA new version is available: %s (current: %s)");
+    }
+    public String getUpdateLatestMessage() {
+        return languageManager.getMessage("update_latest", "&aYou are running the latest version.");
+    }
+    public String getUpdateErrorMessage() {
+        return languageManager.getMessage("update_error", "&cFailed to check for updates.");
+    }
+    public String getUpdateDownloadMessage() {
+        return languageManager.getMessage("update_download", "&eDownload: %s");
+    }
 }

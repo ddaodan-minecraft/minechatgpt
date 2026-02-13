@@ -1,8 +1,8 @@
 package com.ddaodan.MineChatGPT;
 
-import com.ddaodan.MineChatGPT.service.ApiService;
 import com.ddaodan.MineChatGPT.service.CommandService;
 import com.ddaodan.MineChatGPT.service.RequestCoordinator;
+import com.ddaodan.MineChatGPT.service.UpdateChecker;
 import com.ddaodan.MineChatGPT.service.UserSessionManager;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -12,10 +12,10 @@ public class CommandHandler implements CommandExecutor {
     private final CommandService commandService;
     private final UserSessionManager sessionManager;
 
-    public CommandHandler(ConfigManager configManager, UserSessionManager sessionManager, RequestCoordinator requestCoordinator) {
+    public CommandHandler(ConfigManager configManager, UserSessionManager sessionManager, RequestCoordinator requestCoordinator, UpdateChecker updateChecker) {
         this.configManager = configManager;
         this.sessionManager = sessionManager;
-        this.commandService = new CommandService(configManager, requestCoordinator, sessionManager);
+        this.commandService = new CommandService(configManager, requestCoordinator, sessionManager, updateChecker);
     }
 
     @Override
@@ -43,6 +43,8 @@ public class CommandHandler implements CommandExecutor {
                 return commandService.handleCharacterCommand(sender, args, userId);
             } else if (subCommand.equalsIgnoreCase("stats")) {
                 return commandService.handleStatsCommand(sender, args, userId);
+            } else if (subCommand.equalsIgnoreCase("checkupdate")) {
+                return commandService.handleCheckUpdateCommand(sender);
             } else {
                 return commandService.handleAskCommand(sender, args, userId);
             }

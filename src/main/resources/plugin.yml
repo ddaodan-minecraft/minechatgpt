@@ -34,3 +34,6 @@ permissions:
   minechatgpt.stats:
     description: Allows viewing/resetting usage statistics
     default: op
+  minechatgpt.checkupdate:
+    description: Allows checking for plugin updates
+    default: op

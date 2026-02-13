@@ -258,6 +258,18 @@ characters:
   # Minecraft: "You are a Minecraft expert who helps players with game mechanics and building ideas."
 
 # ======================================================
+# Update Checker Settings
+# 更新检查设置
+# ======================================================
+update_checker:
+  # Enable automatic update checking on server start and OP join
+  # 启用服务器启动和OP加入时自动检查更新
+  enabled: true
+  # Update source: "github" or "modrinth"
+  # 更新源："github" 或 "modrinth"
+  source: "github"
+
+# ======================================================
 # Other Settings
 # 其他设置
 # ======================================================

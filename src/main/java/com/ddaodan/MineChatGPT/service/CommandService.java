@@ -14,11 +14,13 @@ public class CommandService {
     private final ConfigManager configManager;
     private final RequestCoordinator requestCoordinator;
     private final UserSessionManager sessionManager;
+    private final UpdateChecker updateChecker;
 
-    public CommandService(ConfigManager configManager, RequestCoordinator requestCoordinator, UserSessionManager sessionManager) {
+    public CommandService(ConfigManager configManager, RequestCoordinator requestCoordinator, UserSessionManager sessionManager, UpdateChecker updateChecker) {
         this.configManager = configManager;
         this.requestCoordinator = requestCoordinator;
         this.sessionManager = sessionManager;
+        this.updateChecker = updateChecker;
     }
 
     /**
@@ -199,6 +201,15 @@ public class CommandService {
         return true;
     }
 
+    public boolean handleCheckUpdateCommand(CommandSender sender) {
+        if (!sender.hasPermission("minechatgpt.checkupdate")) {
+            sender.sendMessage(configManager.getNoPermissionMessage().replace("%s", "minechatgpt.checkupdate"));
+            return true;
+        }
+        updateChecker.checkAndNotify(sender);
+        return true;
+    }
+
     /**
      * 发送帮助信息
      *
@@ -214,5 +225,6 @@ public class CommandService {
         sender.sendMessage(configManager.getHelpClearMessage());
         sender.sendMessage(configManager.getHelpCharacterMessage());
         sender.sendMessage(configManager.getHelpStatsMessage());
+        sender.sendMessage(configManager.getHelpCheckUpdateMessage());
     }
 }

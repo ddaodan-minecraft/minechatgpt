@@ -10,6 +10,7 @@ public final class Main extends JavaPlugin {
     private com.ddaodan.MineChatGPT.service.UserSessionManager sessionManager;
     private com.ddaodan.MineChatGPT.service.ApiService apiService;
     private com.ddaodan.MineChatGPT.service.RequestCoordinator requestCoordinator;
+    private com.ddaodan.MineChatGPT.service.UpdateChecker updateChecker;
     private CommandHandler commandHandler;
     private MineChatGPTTabCompleter tabCompleter;
 
@@ -21,10 +22,13 @@ public final class Main extends JavaPlugin {
         apiService = new com.ddaodan.MineChatGPT.service.ApiService(this, configManager);
         requestCoordinator = new com.ddaodan.MineChatGPT.service.RequestCoordinator(this, configManager, apiService, sessionManager);
         requestCoordinator.start();
-        commandHandler = new CommandHandler(configManager, sessionManager, requestCoordinator);
+        updateChecker = new com.ddaodan.MineChatGPT.service.UpdateChecker(this, configManager);
+        commandHandler = new CommandHandler(configManager, sessionManager, requestCoordinator, updateChecker);
         tabCompleter = new MineChatGPTTabCompleter(configManager);
         Objects.requireNonNull(getCommand("chatgpt")).setExecutor(commandHandler);
         Objects.requireNonNull(getCommand("chatgpt")).setTabCompleter(tabCompleter);
+        getServer().getPluginManager().registerEvents(updateChecker, this);
+        updateChecker.checkOnStartup();
         if (configManager.isDebugMode()) {
             getLogger().info( "DEBUG MODE IS TRUE!!!!!");
         }
@@ -37,6 +41,9 @@ public final class Main extends JavaPlugin {
     public void onDisable() {
         if (requestCoordinator != null) {
             requestCoordinator.stop();
+        }
+        if (updateChecker != null) {
+            updateChecker.shutdown();
         }
         if (apiService != null) {
             apiService.shutdown();

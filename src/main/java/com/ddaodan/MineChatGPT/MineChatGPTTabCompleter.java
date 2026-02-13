@@ -27,6 +27,7 @@ public class MineChatGPTTabCompleter implements TabCompleter {
             completions.add("clear");
             completions.add("character");
             completions.add("stats");
+            completions.add("checkupdate");
         } else if (args.length == 2) {
             String subCommand = args[0];
             if (subCommand.equalsIgnoreCase("model")) {
