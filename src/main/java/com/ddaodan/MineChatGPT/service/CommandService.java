@@ -12,12 +12,12 @@ import java.util.Map;
  */
 public class CommandService {
     private final ConfigManager configManager;
-    private final ApiService apiService;
+    private final RequestCoordinator requestCoordinator;
     private final UserSessionManager sessionManager;
 
-    public CommandService(ConfigManager configManager, ApiService apiService, UserSessionManager sessionManager) {
+    public CommandService(ConfigManager configManager, RequestCoordinator requestCoordinator, UserSessionManager sessionManager) {
         this.configManager = configManager;
-        this.apiService = apiService;
+        this.requestCoordinator = requestCoordinator;
         this.sessionManager = sessionManager;
     }
 
@@ -33,6 +33,7 @@ public class CommandService {
             return true;
         }
         configManager.reloadConfig();
+        requestCoordinator.reloadFromConfig();
         sender.sendMessage(configManager.getReloadMessage());
         return true;
     }
@@ -161,15 +162,40 @@ public class CommandService {
             return true;
         }
         String question = String.join(" ", args);
-        ConversationContext conversationContext = sessionManager.getConversationContext(userId);
-        boolean contextEnabled = sessionManager.isContextEnabled(userId);
-        
-        if (contextEnabled) {
-            conversationContext.addMessage(question);
-        }
         
         sender.sendMessage(configManager.getQuestionMessage().replace("%s", question));
-        apiService.askChatGPT(sender, question, conversationContext, contextEnabled, userId);
+        requestCoordinator.submitAsk(sender, question, userId);
+        return true;
+    }
+
+    public boolean handleStatsCommand(CommandSender sender, String[] args, String userId) {
+        if (!sender.hasPermission("minechatgpt.stats")) {
+            sender.sendMessage(configManager.getNoPermissionMessage().replace("%s", "minechatgpt.stats"));
+            return true;
+        }
+
+        if (args.length >= 2 && "reset".equalsIgnoreCase(args[1])) {
+            requestCoordinator.resetUsageTracker();
+            sender.sendMessage(configManager.getStatsResetMessage());
+            return true;
+        }
+
+        UsageTracker.Snapshot global = requestCoordinator.getUsageTracker().getGlobal();
+        UsageTracker.Snapshot user = requestCoordinator.getUsageTracker().getUser(userId);
+
+        sender.sendMessage(configManager.getStatsHeaderMessage());
+        sender.sendMessage(configManager.getStatsGlobalMessage()
+                .replaceFirst("%s", String.valueOf(global.totalTokens))
+                .replaceFirst("%s", String.valueOf(global.promptTokens))
+                .replaceFirst("%s", String.valueOf(global.completionTokens))
+                .replaceFirst("%s", String.valueOf(global.requests)));
+
+        sender.sendMessage(configManager.getStatsUserMessage()
+                .replaceFirst("%s", String.valueOf(user.totalTokens))
+                .replaceFirst("%s", String.valueOf(user.promptTokens))
+                .replaceFirst("%s", String.valueOf(user.completionTokens))
+                .replaceFirst("%s", String.valueOf(user.requests)));
+
         return true;
     }
 
@@ -187,5 +213,6 @@ public class CommandService {
         sender.sendMessage(configManager.getHelpContextMessage());
         sender.sendMessage(configManager.getHelpClearMessage());
         sender.sendMessage(configManager.getHelpCharacterMessage());
+        sender.sendMessage(configManager.getHelpStatsMessage());
     }
 }

@@ -26,12 +26,15 @@ public class MineChatGPTTabCompleter implements TabCompleter {
             completions.add("context");
             completions.add("clear");
             completions.add("character");
+            completions.add("stats");
         } else if (args.length == 2) {
             String subCommand = args[0];
             if (subCommand.equalsIgnoreCase("model")) {
                 completions.addAll(configManager.getModels());
             } else if (subCommand.equalsIgnoreCase("character")) {
                 completions.addAll(configManager.getCharacters().keySet());
+            } else if (subCommand.equalsIgnoreCase("stats")) {
+                completions.add("reset");
             }
         }
 

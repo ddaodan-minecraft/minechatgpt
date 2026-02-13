@@ -14,12 +14,14 @@ public class UserSessionManager {
     private final Map<String, ConversationContext> userContexts;
     private final Map<String, Boolean> userContextEnabled;
     private final Map<String, String> userCurrentCharacter;
+    private final Map<String, String> userSummaries;
 
     public UserSessionManager(ConfigManager configManager) {
         this.configManager = configManager;
         this.userContexts = new HashMap<>();
         this.userContextEnabled = new HashMap<>();
         this.userCurrentCharacter = new HashMap<>();
+        this.userSummaries = new HashMap<>();
     }
 
     /**
@@ -67,6 +69,7 @@ public class UserSessionManager {
     public void clearConversationHistory(String userId) {
         ConversationContext context = getConversationContext(userId);
         context.clearHistory();
+        clearSummary(userId);
     }
 
     /**
@@ -91,5 +94,21 @@ public class UserSessionManager {
     public void setCurrentCharacter(String userId, String character) {
         userCurrentCharacter.put(userId, character);
         configManager.setCurrentCharacter(userId, character);
+    }
+
+    public String getSummary(String userId) {
+        return userSummaries.getOrDefault(userId, "");
+    }
+
+    public void setSummary(String userId, String summary) {
+        if (summary == null) {
+            userSummaries.remove(userId);
+            return;
+        }
+        userSummaries.put(userId, summary);
+    }
+
+    public void clearSummary(String userId) {
+        userSummaries.remove(userId);
     }
 }

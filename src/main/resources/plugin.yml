@@ -31,3 +31,6 @@ permissions:
   minechatgpt.character:
     description: Allows switching characters
     default: true
+  minechatgpt.stats:
+    description: Allows viewing/resetting usage statistics
+    default: op

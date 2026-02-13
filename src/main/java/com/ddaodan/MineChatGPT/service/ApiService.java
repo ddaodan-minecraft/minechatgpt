@@ -1,155 +1,201 @@
 package com.ddaodan.MineChatGPT.service;
 
 import com.ddaodan.MineChatGPT.ConfigManager;
-import com.ddaodan.MineChatGPT.ConversationContext;
-import org.bukkit.command.CommandSender;
+import com.ddaodan.MineChatGPT.Main;
+import jodd.http.HttpRequest;
+import jodd.http.HttpResponse;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import jodd.http.HttpRequest;
-import jodd.http.HttpResponse;
-
 /**
- * API服务类，负责处理与OpenAI API的通信
+ * API服务类：负责与 OpenAI 兼容接口通信（/chat/completions）
  */
 public class ApiService {
-    private final ConfigManager configManager;
     private static final Logger logger = Logger.getLogger(ApiService.class.getName());
 
-    public ApiService(ConfigManager configManager) {
+    private final Main plugin;
+    private final ConfigManager configManager;
+    private final ExecutorService executor;
+
+    public ApiService(Main plugin, ConfigManager configManager) {
+        this.plugin = plugin;
         this.configManager = configManager;
+        this.executor = Executors.newFixedThreadPool(
+                configManager.getApiThreadPoolSize(),
+                newNamedThreadFactory("minechatgpt-api-")
+        );
     }
 
-    /**
-     * 向ChatGPT发送请求
-     *
-     * @param sender 命令发送者
-     * @param question 问题内容
-     * @param conversationContext 对话上下文
-     * @param contextEnabled 是否启用上下文
-     * @param userId 用户ID
-     */
-    public void askChatGPT(CommandSender sender, String question, ConversationContext conversationContext, boolean contextEnabled, String userId) {
-        String utf8Question = convertToUTF8(question);
-        JSONObject json = new JSONObject();
-        json.put("model", configManager.getCurrentModel());
-        JSONArray messages = new JSONArray();
-        
-        // 添加自定义 prompt
-        String currentCharacter = configManager.getCurrentCharacter(userId);
-        String customPrompt = configManager.getCharacters().get(currentCharacter);
-        if (customPrompt != null && !customPrompt.isEmpty()) {
-            JSONObject promptMessage = new JSONObject();
-            promptMessage.put("role", "system");
-            promptMessage.put("content", customPrompt);
-            messages.put(promptMessage);
+    public void shutdown() {
+        executor.shutdownNow();
+    }
+
+    public CompletableFuture<ChatCompletionResult> createChatCompletion(String model, JSONArray messages) {
+        if (model == null || model.trim().isEmpty()) {
+            return CompletableFuture.completedFuture(ChatCompletionResult.error("Missing model", null));
         }
-        
-        JSONObject message = new JSONObject();
-        message.put("role", "user");
-        message.put("content", utf8Question);
-        messages.put(message);
-        
-        if (contextEnabled) {
-            String history = conversationContext.getConversationHistory();
-            if (!history.isEmpty()) {
-                JSONObject historyMessage = new JSONObject();
-                historyMessage.put("role", "system");
-                historyMessage.put("content", history);
-                messages.put(historyMessage);
-            }
-        }
-        
-        json.put("messages", messages);
-        
-        if (configManager.isDebugMode()) {
-            logger.info("Built request: " + json.toString());
+        if (messages == null) {
+            messages = new JSONArray();
         }
 
-        HttpRequest request = HttpRequest.post(configManager.getBaseUrl() + "/chat/completions")
+        String apiKey = configManager.getApiKey();
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            return CompletableFuture.completedFuture(ChatCompletionResult.error(configManager.getNoApiKeyMessage(), null));
+        }
+
+        JSONObject payload = new JSONObject();
+        payload.put("model", model);
+        payload.put("messages", messages);
+
+        if (configManager.isDebugMode()) {
+            logger.info("Built request: " + payload);
+        }
+
+        String baseUrl = normalizeBaseUrl(configManager.getBaseUrl());
+        HttpRequest request = HttpRequest
+                .post(baseUrl + "/chat/completions")
                 .header("Content-Type", "application/json; charset=UTF-8")
-                .header("Authorization", "Bearer " + configManager.getApiKey())
-                .bodyText(json.toString());
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .header("User-Agent", "MineChatGPT/" + plugin.getDescription().getVersion())
+                .connectionTimeout(configManager.getApiConnectTimeoutMs())
+                .timeout(configManager.getApiTimeoutMs())
+                .bodyText(payload.toString());
 
         if (configManager.isDebugMode()) {
-            logger.info("Sending request to ChatGPT: " + request.toString());
+            logger.info("Sending request: " + request);
         }
 
-        CompletableFuture.supplyAsync(() -> request.send())
-                .thenAccept(response -> {
-                    if (configManager.isDebugMode()) {
-                        logger.info("Received response from ChatGPT: " + response.toString());
-                    }
-                    if (response.statusCode() == 200) {
-                        processSuccessResponse(response, sender, conversationContext, contextEnabled, currentCharacter);
-                    } else {
-                        processErrorResponse(response, sender);
-                    }
-                })
+        return CompletableFuture
+                .supplyAsync(request::send, executor)
+                .thenApply(response -> parseResponse(response))
                 .exceptionally(e -> {
                     logger.log(Level.SEVERE, "Exception occurred while processing request: " + e.getMessage(), e);
-                    sender.sendMessage(configManager.getChatGPTErrorMessage());
-                    return null;
+                    return ChatCompletionResult.error(configManager.getChatGPTErrorMessage(), null);
                 });
     }
 
-    /**
-     * 处理成功的API响应
-     *
-     * @param response HTTP响应
-     * @param sender 命令发送者
-     * @param conversationContext 对话上下文
-     * @param contextEnabled 是否启用上下文
-     * @param currentCharacter 当前角色
-     */
-    private void processSuccessResponse(HttpResponse response, CommandSender sender, 
-                                       ConversationContext conversationContext, 
-                                       boolean contextEnabled, String currentCharacter) {
-        String responseBody = response.bodyText();
-        String utf8ResponseBody = new String(responseBody.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8);
-        try {
-            JSONObject jsonResponse = new JSONObject(utf8ResponseBody);
-            String answer = jsonResponse.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
-            sender.sendMessage(configManager.getChatGPTResponseMessage().replaceFirst("%s", currentCharacter).replaceFirst("%s", answer));
-            if (contextEnabled) {
-                conversationContext.addMessage(answer); // 仅在启用上下文时添加AI响应到历史记录
+    private ChatCompletionResult parseResponse(HttpResponse response) {
+        if (configManager.isDebugMode()) {
+            logger.info("Received response: " + response);
+        }
+
+        int status = response.statusCode();
+        String body = response.bodyText();
+
+        if (status == 200) {
+            try {
+                JSONObject json = new JSONObject(body);
+                String answer = json
+                        .getJSONArray("choices")
+                        .getJSONObject(0)
+                        .getJSONObject("message")
+                        .getString("content");
+
+                Usage usage = null;
+                if (json.has("usage")) {
+                    JSONObject usageJson = json.getJSONObject("usage");
+                    long prompt = usageJson.optLong("prompt_tokens", -1);
+                    long completion = usageJson.optLong("completion_tokens", -1);
+                    long total = usageJson.optLong("total_tokens", -1);
+                    if (prompt >= 0 && completion >= 0 && total >= 0) {
+                        usage = new Usage(prompt, completion, total);
+                    }
+                }
+
+                return ChatCompletionResult.success(answer, usage);
+            } catch (Exception e) {
+                logger.log(Level.SEVERE, "Failed to parse response: " + e.getMessage(), e);
+                return ChatCompletionResult.error(configManager.getChatGPTErrorMessage(), body);
             }
-        } catch (Exception e) {
-            logger.log(Level.SEVERE, "Failed to parse ChatGPT response: " + e.getMessage(), e);
-            sender.sendMessage(configManager.getChatGPTErrorMessage());
+        }
+
+        String debugDetails = tryExtractOpenAiErrorDetails(status, body);
+        logger.log(Level.SEVERE, "Failed to get response (HTTP " + status + "): " + body);
+        return ChatCompletionResult.error(configManager.getChatGPTErrorMessage(), debugDetails);
+    }
+
+    private static String tryExtractOpenAiErrorDetails(int status, String responseBody) {
+        try {
+            JSONObject errorJson = new JSONObject(responseBody);
+            if (!errorJson.has("error")) {
+                return null;
+            }
+            JSONObject err = errorJson.getJSONObject("error");
+            String message = err.optString("message", "");
+            String code = err.optString("code", "");
+            if (message.isEmpty()) {
+                return null;
+            }
+            return "[MineChatGPT] HTTP " + status + (code.isEmpty() ? "" : " (" + code + ")") + ": " + message;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
-    /**
-     * 处理错误的API响应
-     *
-     * @param response HTTP响应
-     * @param sender 命令发送者
-     */
-    private void processErrorResponse(HttpResponse response, CommandSender sender) {
-        String errorBody = response.bodyText();
-        logger.log(Level.SEVERE, "Failed to get a response from ChatGPT: " + errorBody);
-        sender.sendMessage(configManager.getChatGPTErrorMessage());
+    private static String normalizeBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return "https://api.openai.com/v1";
+        }
+        String trimmed = baseUrl.trim();
+        if (trimmed.endsWith("/")) {
+            return trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed;
     }
 
-    /**
-     * 将字符串转换为UTF-8编码
-     *
-     * @param input 输入字符串
-     * @return UTF-8编码的字符串
-     */
-    private String convertToUTF8(String input) {
-        try {
-            byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
-            return new String(bytes, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            logger.severe("Failed to convert input to UTF-8: " + e.getMessage());
-            return input; // 如果转换失败，返回原始输入
+    private static ThreadFactory newNamedThreadFactory(String prefix) {
+        AtomicInteger counter = new AtomicInteger(1);
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + counter.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
+    public static final class Usage {
+        public final long promptTokens;
+        public final long completionTokens;
+        public final long totalTokens;
+
+        public Usage(long promptTokens, long completionTokens, long totalTokens) {
+            this.promptTokens = promptTokens;
+            this.completionTokens = completionTokens;
+            this.totalTokens = totalTokens;
+        }
+    }
+
+    public static final class ChatCompletionResult {
+        public final String answer;
+        public final Usage usage;
+        public final String errorMessage;
+        public final String debugDetails;
+
+        private ChatCompletionResult(String answer, Usage usage, String errorMessage, String debugDetails) {
+            this.answer = answer;
+            this.usage = usage;
+            this.errorMessage = errorMessage;
+            this.debugDetails = debugDetails;
+        }
+
+        public static ChatCompletionResult success(String answer, Usage usage) {
+            return new ChatCompletionResult(answer, usage, null, null);
+        }
+
+        public static ChatCompletionResult error(String errorMessage, String debugDetails) {
+            return new ChatCompletionResult(null, null, errorMessage, debugDetails);
+        }
+
+        public boolean isSuccess() {
+            return errorMessage == null;
         }
     }
 }

@@ -4,7 +4,10 @@
 # ======================================================
 # Available languages: en, zh
 # 可用语言：en（英文）, zh（中文）
+# This only affects plugin prompts, not the model's answer language.
+# 该项仅影响插件提示语言，不影响模型回答语言。
 language: "en"
+
 # ======================================================
 # API Configuration
 # API 设置
@@ -14,32 +17,58 @@ api:
   # To obtain an API key, visit https://platform.openai.com/account/api-keys and create a new API key
   # 你的 OpenAI API key，用于身份验证
   # 获取 API key 的方法：访问 https://platform.openai.com/account/api-keys 并创建一个新的 API key
+  # Placeholder keys such as sk-your_openai_api_key_1 are treated as invalid.
+  # 占位 key（如 sk-your_openai_api_key_1）会被视为无效。
   keys:
     - "sk-your_openai_api_key_1"
     # You can add multiple API keys below
     # 可以添加多个API key
     # - "sk-your_openai_api_key_2"
     # - "sk-your_openai_api_key_3"
-  
+
   # API key selection method: "round_robin" or "random"
   # Round Robin: Use each API key in turn
   # Random: Randomly select an API key
   # API key 选择方法："round_robin"（轮询）或 "random"（随机）
   # 轮询：依次使用每个API key
   # 随机：随机选择一个API key
+  # Use round_robin for steadier distribution in production.
+  # 生产环境更推荐 round_robin，分配更均匀。
   selection_method: "round_robin"
-  
+
   # The base URL for the OpenAI API, used to construct requests
   # If you cannot access the official API, you can use a proxy service
   # OpenAI API 的基础 URL，用于构建请求
   # 如果你无法访问官方API，可以使用代理服务
+  # Keep the /v1 path in the URL.
+  # URL 保留 /v1 路径。
   base_url: "https://api.openai.com/v1"
+
+  # HTTP timeouts (milliseconds)
+  # HTTP 超时（毫秒）
+  # connect_timeout_ms controls connection phase, timeout_ms controls total request time.
+  # connect_timeout_ms 控制建连阶段，timeout_ms 控制整次请求耗时。
+  # Increase carefully on unstable networks to avoid slow failure feedback.
+  # 网络不稳定时可适当调大，但过大可能导致失败反馈变慢。
+  connect_timeout_ms: 10000
+  timeout_ms: 30000
+
+  # Thread pool size for API requests
+  # API 请求线程池大小
+  # Higher value increases concurrency but also upstream pressure.
+  # 值越大并发越高，但也会增加上游 API 压力。
+  # Tune together with queue.max_in_flight.
+  # 建议与 queue.max_in_flight 配合调优。
+  thread_pool_size: 4
+
 # ======================================================
 # Model Configuration
 # 模型设置
 # ======================================================
 # List of supported models
 # 支持的模型列表
+# This is a selectable whitelist; actual availability depends on your provider.
+# 这里只是可选白名单，具体是否可用取决于服务商支持情况。
 models:
   # OpenAI ChatGPT
   - "gpt-4"
@@ -58,7 +87,10 @@ models:
 
 # The default model to use
 # 默认使用的模型
+# Use a cost-effective model as default for daily usage.
+# 日常建议选择更稳定且成本更低的模型作为默认模型。
 default_model: "gpt-4o-mini"
+
 # ======================================================
 # Conversation Settings
 # 对话设置
@@ -68,13 +100,141 @@ conversation:
   # When enabled, the plugin will remember the conversation history
   # 连续对话开关
   # 启用时，插件将记住对话历史
+  # Enabling improves continuity but increases token usage.
+  # 开启后连贯性更好，但 token 消耗会增加。
   context_enabled: false
-  
+
   # Maximum number of historical records retained
   # Increasing this value will consume more memory
   # 最大历史记录保留数量
   # 增加此值将消耗更多内存
+  # Usually 8~20 is a practical range.
+  # 通常 8~20 是较实用的范围。
   max_history_size: 10
+
+  # Token budget for context (approximate)
+  # 上下文 token 预算（近似）
+  # Exceeding this budget may trigger trimming or summarization.
+  # 超过预算会触发上下文裁剪或总结。
+  max_context_tokens: 2000
+
+  # Reserve tokens for the model output (approximate)
+  # 为模型输出预留 token（近似）
+  # Too low may truncate replies; too high reduces usable context.
+  # 值太小可能截断回复，值太大则压缩可用上下文。
+  reserve_completion_tokens: 400
+
+  # Automatic summarization to keep context within budget
+  # 自动总结以控制上下文长度
+  summarization:
+    # If disabled, long sessions are more likely to hit context limits.
+    # 关闭后长会话更容易触发上下文超限。
+    enabled: true
+    # Model used for summarization
+    # 用于总结的模型
+    # Prefer a faster/cheaper model for summarization.
+    # 建议用更快/更便宜的模型做总结。
+    model: "gpt-4o-mini"
+    # When estimated context tokens exceed this value, summarization may run
+    # 当估算的上下文 tokens 超过该值时可能触发总结
+    # Usually set slightly lower than max_context_tokens (e.g. 100~300 lower).
+    # 通常设为略低于 max_context_tokens（如低 100~300）。
+    trigger_tokens: 1800
+    # Keep the last N messages (user/assistant) after summarization
+    # 总结后保留最近 N 条消息（user/assistant）
+    # Higher value keeps more detail but uses more tokens.
+    # 值越大保留细节越多，但占用也更高。
+    keep_last_messages: 6
+
+# ======================================================
+# Rate Limit / Queue Settings
+# 限流 / 排队 设置
+# ======================================================
+rate_limit:
+  # Master switch for cooldown/token-bucket limiting.
+  # 冷却与令牌桶限流总开关。
+  enabled: true
+  # Mode: "requests" | "tokens" | "both"
+  # 模式："requests" | "tokens" | "both"
+  # requests = limit by request count
+  # tokens = limit by token budget
+  # both = enforce both limits (recommended)
+  # requests = 仅按请求次数
+  # tokens = 仅按 token 预算
+  # both = 两者同时生效（推荐）
+  mode: "both"
+
+  # Cooldown per user after accepting a request (milliseconds)
+  # 每个用户请求冷却（毫秒）
+  # Helps reduce short burst command spam from one player.
+  # 用于抑制单玩家短时间刷命令。
+  cooldown_ms: 1000
+
+  # Token estimation method: "approx_chars"
+  # token 估算方法："approx_chars"
+  # This estimator is approximate by design.
+  # 该估算器是近似估算。
+  token_estimator: "approx_chars"
+
+  # If token-mode is enabled, assume this many completion tokens per request for limiting
+  # 如果启用 token 限流，按该值假设每次回复的 completion tokens（用于限流）
+  # Increase this if users often ask for long outputs.
+  # 用户经常要求长回复时可适当提高该值。
+  assumed_completion_tokens: 300
+
+  per_user:
+    # Per-user request refill rate (requests/min).
+    # 单用户请求额度恢复速率（每分钟）。
+    requests_per_minute: 6
+    # Per-user request burst capacity.
+    # 单用户请求突发容量。
+    burst_requests: 3
+    # Per-user token refill rate (tokens/min).
+    # 单用户 token 额度恢复速率（每分钟）。
+    tokens_per_minute: 4000
+    # Per-user token burst capacity.
+    # 单用户 token 突发容量。
+    burst_tokens: 2000
+
+  global:
+    # Global request refill rate (requests/min).
+    # 全局请求额度恢复速率（每分钟）。
+    requests_per_minute: 60
+    # Global request burst capacity.
+    # 全局请求突发容量。
+    burst_requests: 20
+    # Global token refill rate (tokens/min).
+    # 全局 token 额度恢复速率（每分钟）。
+    tokens_per_minute: 100000
+    # Global token burst capacity.
+    # 全局 token 突发容量。
+    burst_tokens: 20000
+
+queue:
+  # If enabled, requests can wait in queue instead of immediate rejection.
+  # 开启后，请求可进入队列等待，而不是直接拒绝。
+  enabled: true
+  # Maximum queued jobs globally
+  # 全局队列最大长度
+  # New jobs are rejected after this limit.
+  # 达到上限后新请求会被拒绝。
+  max_size: 100
+  # Maximum queued jobs per user
+  # 每个用户队列最大长度
+  # Prevent one player from occupying all queue slots.
+  # 防止单玩家占满队列。
+  max_per_user: 3
+  # Maximum in-flight (concurrent) API requests
+  # 同时进行中的 API 请求上限
+  # Usually set <= api.thread_pool_size.
+  # 通常建议不高于 api.thread_pool_size。
+  max_in_flight: 4
+  # How many jobs to dispatch per tick (Spigot main thread)
+  # 每 tick 尝试派发多少个任务（主线程）
+  # Higher value drains queue faster but increases main-thread scheduling pressure.
+  # 值越大清队越快，但主线程调度压力更高。
+  dispatch_per_tick: 2
+
 # ======================================================
 # Character Settings
 # 角色设置
@@ -86,10 +246,12 @@ characters:
   # 格式：
   # 角色名称: "角色提示词"
   # 提示词将作为系统消息发送给AI
-  
+  # Keep prompts clear and concise to avoid unnecessary token overhead.
+  # 建议提示词简洁明确，避免无谓 token 开销。
+
   # Default character
   ChatGPT: "You are a helpful assistant."
-  
+
   # You can add more characters below
   # 你可以在下方添加更多角色
   # Example:

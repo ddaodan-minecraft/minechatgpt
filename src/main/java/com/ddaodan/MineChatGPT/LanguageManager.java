@@ -1,5 +1,6 @@
 package com.ddaodan.MineChatGPT;
 
+import com.ddaodan.MineChatGPT.util.ConfigFileUpdater;
 import org.bukkit.ChatColor;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -23,22 +24,29 @@ public class LanguageManager {
     }
 
     public void loadLanguage() {
+        String resourcePath = "lang/" + currentLanguage + ".yml";
         langFile = new File(plugin.getDataFolder(), "lang" + File.separator + currentLanguage + ".yml");
-        
-        // 如果语言文件不存在，创建默认语言文件
-        if (!langFile.exists()) {
-            langFile.getParentFile().mkdirs();
-            plugin.saveResource("lang/" + currentLanguage + ".yml", false);
+
+        if (plugin.getResource(resourcePath) != null) {
+            ConfigFileUpdater.UpdateResult updateResult = ConfigFileUpdater.updateIfMissingKeys(plugin, resourcePath);
+            if (updateResult.updated) {
+                plugin.getLogger().info("Language file updated (" + currentLanguage + "): inserted "
+                        + updateResult.insertedPaths + " missing path(s). Backup: " + updateResult.backupFileName);
+            }
+        } else if (!langFile.exists()) {
+            plugin.getLogger().warning("Language resource not found: " + resourcePath + ", file does not exist.");
         }
-        
+
         langConfig = YamlConfiguration.loadConfiguration(langFile);
-        
-        // 设置默认值，以防语言文件中缺少某些键
-        InputStream defaultLangStream = plugin.getResource("lang/" + currentLanguage + ".yml");
+
+        InputStream defaultLangStream = plugin.getResource(resourcePath);
         if (defaultLangStream != null) {
-            YamlConfiguration defaultLang = YamlConfiguration.loadConfiguration(
-                    new InputStreamReader(defaultLangStream, StandardCharsets.UTF_8));
-            langConfig.setDefaults(defaultLang);
+            try (InputStreamReader reader = new InputStreamReader(defaultLangStream, StandardCharsets.UTF_8)) {
+                YamlConfiguration defaultLang = YamlConfiguration.loadConfiguration(reader);
+                langConfig.setDefaults(defaultLang);
+            } catch (IOException ex) {
+                plugin.getLogger().warning("Failed to load default language resource: " + ex.getMessage());
+            }
         }
     }
 

@@ -7,18 +7,21 @@ import java.util.Objects;
 
 public final class Main extends JavaPlugin {
     private ConfigManager configManager;
+    private com.ddaodan.MineChatGPT.service.UserSessionManager sessionManager;
+    private com.ddaodan.MineChatGPT.service.ApiService apiService;
+    private com.ddaodan.MineChatGPT.service.RequestCoordinator requestCoordinator;
     private CommandHandler commandHandler;
     private MineChatGPTTabCompleter tabCompleter;
-    private LanguageManager languageManager;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         configManager = new ConfigManager(this);
-        // 初始化语言管理器
-        String language = getConfig().getString("language", "en");
-        languageManager = new LanguageManager(this, language);
-        commandHandler = new CommandHandler(this, configManager);
+        sessionManager = new com.ddaodan.MineChatGPT.service.UserSessionManager(configManager);
+        apiService = new com.ddaodan.MineChatGPT.service.ApiService(this, configManager);
+        requestCoordinator = new com.ddaodan.MineChatGPT.service.RequestCoordinator(this, configManager, apiService, sessionManager);
+        requestCoordinator.start();
+        commandHandler = new CommandHandler(configManager, sessionManager, requestCoordinator);
         tabCompleter = new MineChatGPTTabCompleter(configManager);
         Objects.requireNonNull(getCommand("chatgpt")).setExecutor(commandHandler);
         Objects.requireNonNull(getCommand("chatgpt")).setTabCompleter(tabCompleter);
@@ -32,6 +35,12 @@ public final class Main extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (requestCoordinator != null) {
+            requestCoordinator.stop();
+        }
+        if (apiService != null) {
+            apiService.shutdown();
+        }
         saveConfig();
     }
 }
