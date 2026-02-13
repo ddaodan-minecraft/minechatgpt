@@ -6,13 +6,16 @@ import com.ddaodan.MineChatGPT.Main;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 public class RequestCoordinator {
@@ -32,6 +35,7 @@ public class RequestCoordinator {
     private volatile TokenEstimator tokenEstimator;
     private volatile RequestQueue<RequestJob> queue;
     private volatile int dispatchTaskId = -1;
+    private volatile Object foliaDispatchTask;
 
     public RequestCoordinator(Main plugin, ConfigManager configManager, ApiService apiService, UserSessionManager sessionManager) {
         this.plugin = plugin;
@@ -57,10 +61,10 @@ public class RequestCoordinator {
     }
 
     public void start() {
-        if (dispatchTaskId != -1) {
+        if (dispatchTaskId != -1 || foliaDispatchTask != null) {
             return;
         }
-        dispatchTaskId = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+        Runnable dispatchRunnable = () -> {
             if (!configManager.isQueueEnabled()) {
                 return;
             }
@@ -76,10 +80,30 @@ public class RequestCoordinator {
                 }
                 dispatch(job);
             }
-        }, 1L, 1L).getTaskId();
+        };
+
+        if (isFoliaSchedulerAvailable()) {
+            try {
+                foliaDispatchTask = runFoliaRepeating(dispatchRunnable, 1L, 1L);
+                return;
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.WARNING, "Failed to schedule Folia repeating task, fallback to Bukkit scheduler.", e);
+            }
+        }
+
+        dispatchTaskId = Bukkit.getScheduler().runTaskTimer(plugin, dispatchRunnable, 1L, 1L).getTaskId();
     }
 
     public void stop() {
+        if (foliaDispatchTask != null) {
+            try {
+                cancelFoliaTask(foliaDispatchTask);
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.WARNING, "Failed to cancel Folia dispatch task.", e);
+            } finally {
+                foliaDispatchTask = null;
+            }
+        }
         if (dispatchTaskId != -1) {
             Bukkit.getScheduler().cancelTask(dispatchTaskId);
             dispatchTaskId = -1;
@@ -163,7 +187,7 @@ public class RequestCoordinator {
     }
 
     private void handleCompletion(RequestJob job, String characterName, ApiService.ChatCompletionResult result) {
-        Bukkit.getScheduler().runTask(plugin, () -> {
+        runOnMainThread(() -> {
             if (!plugin.isEnabled()) {
                 return;
             }
@@ -270,7 +294,7 @@ public class RequestCoordinator {
 
     private CompletableFuture<Void> runSync(Runnable runnable) {
         CompletableFuture<Void> future = new CompletableFuture<>();
-        Bukkit.getScheduler().runTask(plugin, () -> {
+        runOnMainThread(() -> {
             try {
                 runnable.run();
                 future.complete(null);
@@ -279,6 +303,63 @@ public class RequestCoordinator {
             }
         });
         return future;
+    }
+
+    private void runOnMainThread(Runnable runnable) {
+        if (isFoliaSchedulerAvailable()) {
+            try {
+                runFoliaNow(runnable);
+                return;
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.WARNING, "Failed to execute on Folia scheduler, fallback to Bukkit scheduler.", e);
+            }
+        }
+        Bukkit.getScheduler().runTask(plugin, runnable);
+    }
+
+    private Object runFoliaRepeating(Runnable runnable, long initialDelayTicks, long periodTicks) throws Exception {
+        Object scheduler = getGlobalRegionScheduler();
+        Method method = scheduler.getClass().getMethod("runAtFixedRate", Plugin.class, Consumer.class, long.class, long.class);
+        Consumer<Object> consumer = task -> runnable.run();
+        return method.invoke(scheduler, plugin, consumer, initialDelayTicks, periodTicks);
+    }
+
+    private void cancelFoliaTask(Object task) throws Exception {
+        try {
+            // Prefer invoking through public ScheduledTask interface when available.
+            Class<?> scheduledTaskInterface = Class.forName("io.papermc.paper.threadedregions.scheduler.ScheduledTask");
+            Method cancel = scheduledTaskInterface.getMethod("cancel");
+            cancel.invoke(task);
+            return;
+        } catch (ClassNotFoundException ignored) {
+            // Fall through to reflective invocation on task implementation.
+        }
+
+        Method cancel = task.getClass().getDeclaredMethod("cancel");
+        if (!cancel.isAccessible()) {
+            cancel.setAccessible(true);
+        }
+        cancel.invoke(task);
+    }
+
+    private void runFoliaNow(Runnable runnable) throws Exception {
+        Object scheduler = getGlobalRegionScheduler();
+        Method method = scheduler.getClass().getMethod("execute", Plugin.class, Runnable.class);
+        method.invoke(scheduler, plugin, runnable);
+    }
+
+    private Object getGlobalRegionScheduler() throws Exception {
+        Method method = Bukkit.getServer().getClass().getMethod("getGlobalRegionScheduler");
+        return method.invoke(Bukkit.getServer());
+    }
+
+    private boolean isFoliaSchedulerAvailable() {
+        try {
+            Bukkit.getServer().getClass().getMethod("getGlobalRegionScheduler");
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
     }
 
     private void trimContextToBudget(String characterPrompt, String summary, ConversationContext context) {
